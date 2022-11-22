@@ -20,27 +20,82 @@ var (
 )
 
 func main() {
-	flag.Parse()
-	log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain, *domainIP, *nameservers)
 
-	dns.HandleFunc(*domain+".", func(w dns.ResponseWriter, req *dns.Msg) {
-		m := new(dns.Msg)
-		m.SetReply(req)
-		m.Authoritative = true
-		defer w.WriteMsg(m)
-		for _, q := range req.Question {
-			log.Printf("Resolve DNS query for %#v to %s", q.Name, *domainIP)
-			m.Answer = append(m.Answer, &dns.A{
-				A:   net.ParseIP(*domainIP),
-				Hdr: dns.RR_Header{Name: q.Name, Class: q.Qclass, Ttl: 0, Rrtype: dns.TypeA},
-			})
-		}
-	})
+	flag.Parse()
+
+	log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain,
+		*domainIP, *nameservers)
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(req)
+		defer w.WriteMsg(m)
 		for _, q := range req.Question {
-			log.Printf("Forward DNS query for %#v", q.Name)
+			switch q.Qtype {
+			case dns.TypeANY, dns.TypeA, dns.TypeAAAA:
+				m.Authoritative = true
+				log.Printf("request %v is A question\n", req.Question)
+				m.Answer = append(m.Answer, &dns.A{
+					A: net.ParseIP("1.2.3.4"),
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeA,
+						Class:  q.Qclass,
+						Ttl:    0,
+					},
+				})
+				return
+			case dns.TypeMX:
+				m.Authoritative = true
+				log.Printf("request %v is MX question\n", req.Question)
+				m.Answer = append(m.Answer, &dns.MX{
+					Preference: 10,
+					Mx:         "mail.ben.co.za.",
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeMX,
+						Class:  dns.ClassINET,
+					},
+				})
+				m.Answer = append(m.Answer, &dns.MX{
+					Preference: 10,
+					Mx:         "mail2.ben.co.za.",
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeMX,
+						Class:  dns.ClassINET,
+					},
+				})
+				return
+			case dns.TypeNS:
+				m.Authoritative = true
+				log.Printf("request %v is NS question\n", req.Question)
+				m.Answer = append(m.Answer, &dns.NS{
+					Ns: "ns1.ben.co.za.",
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeNS,
+						Class:  dns.ClassINET,
+					},
+				})
+				m.Answer = append(m.Answer, &dns.NS{
+					Ns: "ns2.ben.co.za.",
+					Hdr: dns.RR_Header{
+						Name:   q.Name,
+						Rrtype: dns.TypeNS,
+						Class:  dns.ClassINET,
+					},
+				})
+				return
+			default:
+				break
+				// case dns.TypeSOA:
+				// 	m.Authoritative = true
+				// 	log.Printf("request %v is SOA question\n", req.Question)
+				// 	break
+			}
 		}
+		log.Printf("forwarding query\n")
 		client := &dns.Client{Net: "udp", SingleInflight: true}
 		for _, ns := range strings.Split(*nameservers, ",") {
 			if r, _, err := client.Exchange(req, ns+":53"); err == nil {
@@ -55,10 +110,7 @@ func main() {
 			}
 		}
 		log.Println("failure to forward request")
-		m := new(dns.Msg)
-		m.SetReply(req)
 		m.SetRcode(req, dns.RcodeServerFailure)
-		w.WriteMsg(m)
 	})
 
 	go func() {
@@ -72,7 +124,7 @@ func main() {
 		}
 	}()
 
-	server := &dns.Server{Addr: ":53", Net: "udp", TsigSecret: nil}
+	server := &dns.Server{Addr: "127.0.0.1:53", Net: "udp", TsigSecret: nil}
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to setup server: %v\n", err)
 	}
