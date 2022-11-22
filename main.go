@@ -20,16 +20,12 @@ var (
 )
 
 func main() {
-
 	flag.Parse()
-
-	log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain,
-		*domainIP, *nameservers)
-
+	log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain, *domainIP, *nameservers)
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		m := new(dns.Msg)
 		m.SetReply(req)
-		defer w.WriteMsg(m)
+
 		for _, q := range req.Question {
 			switch q.Qtype {
 			case dns.TypeANY, dns.TypeA, dns.TypeAAAA:
@@ -44,6 +40,7 @@ func main() {
 						Ttl:    0,
 					},
 				})
+				w.WriteMsg(m)
 				return
 			case dns.TypeMX:
 				m.Authoritative = true
@@ -66,6 +63,7 @@ func main() {
 						Class:  dns.ClassINET,
 					},
 				})
+				w.WriteMsg(m)
 				return
 			case dns.TypeNS:
 				m.Authoritative = true
@@ -86,6 +84,7 @@ func main() {
 						Class:  dns.ClassINET,
 					},
 				})
+				w.WriteMsg(m)
 				return
 			default:
 				break
