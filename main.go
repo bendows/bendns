@@ -14,14 +14,12 @@ import (
 )
 
 var (
-	domain      = flag.String("domain", "google.co.za", "wildcard domain")
-	domainIP    = flag.String("ip", "127.0.0.21", "where domain should resolve")
 	nameservers = flag.String("nameservers", "8.8.8.8,8.8.4.4", "nameservers for forwarding")
 )
 
 func main() {
 	flag.Parse()
-	log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain, *domainIP, *nameservers)
+	// log.Printf("Serving %s->%s and forwarding rest to %s\n", *domain, *domainIP, *nameservers)
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		m := new(dns.Msg)
 		m.SetReply(req)
@@ -55,7 +53,7 @@ func main() {
 					},
 				})
 				m.Answer = append(m.Answer, &dns.MX{
-					Preference: 10,
+					Preference: 15,
 					Mx:         "mail2.ben.co.za.",
 					Hdr: dns.RR_Header{
 						Name:   q.Name,
