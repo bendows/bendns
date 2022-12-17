@@ -39,12 +39,15 @@ func main() {
 		*listenIP = resolveHostIp()
 	}
 	log.Printf("Serving DNS on %s forwarding some requests to %s\n", *listenIP, *nameservers)
+
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
+
 		m := new(dns.Msg)
 		m.SetReply(req)
 
 		for _, q := range req.Question {
 
+			// generateAuthoritaveAnswer()
 			log.Printf("[%s] %v %v\n", w.RemoteAddr(), q.Name, q)
 
 			if strings.HasSuffix(q.Name, "fblks.io.") {
