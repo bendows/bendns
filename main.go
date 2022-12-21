@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	logger "github.com/bendows/gologger"
 
@@ -68,6 +69,7 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 				Ttl:    0,
 			},
 		})
+		break
 	case dns.TypeMX:
 		m.Answer = append(m.Answer, &dns.MX{
 			Preference: 10,
@@ -87,6 +89,7 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 				Class:  dns.ClassINET,
 			},
 		})
+		break
 	case dns.TypeNS:
 		m.Answer = append(m.Answer, &dns.NS{
 			Ns: "ns1.fblks.io.",
@@ -104,13 +107,36 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 				Class:  dns.ClassINET,
 			},
 		})
+		break
+	case dns.TypeSOA:
+		m.Answer = append(m.Answer, &dns.SOA{
+			Ns:      "ns.fblks.io.",
+			Mbox:    "ben.fblks.io.",
+			Serial:  uint32(time.Now().Unix()),
+			Refresh: uint32(60),
+			Retry:   uint32(60),
+			Expire:  uint32(60),
+			Minttl:  uint32(60),
+			Hdr: dns.RR_Header{
+				Name:   q.Name,
+				Rrtype: dns.TypeSOA,
+				Class:  dns.ClassINET,
+			},
+		})
+		break
+	case dns.TypePTR:
+		m.Answer = append(m.Answer, &dns.PTR{
+			Ptr: "ns.fblks.io.",
+			Hdr: dns.RR_Header{
+				Name:   q.Name,
+				Rrtype: dns.TypePTR,
+				Class:  dns.ClassINET,
+			},
+		})
+		break
 	default:
 		m.SetRcode(req, dns.RcodeServerFailure)
 		logger.Loginfo.Println("woooops")
-		// case dns.TypeSOA:
-		// 	m.Authoritative = true
-		// 	log.Printf("request %v is SOA question\n", req.Question)
-		// 	break
 	}
 	return m
 }
@@ -125,6 +151,12 @@ func main() {
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		for _, q := range req.Question {
 			if strings.HasSuffix(q.Name, "fblks.io.") {
+				m := AuthoritaveAnswer(req, &q)
+				w.WriteMsg(m)
+				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, *listenIP, m.Answer)
+				return //is this correct?
+			}
+			if q.Qtype == dns.TypePTR {
 				m := AuthoritaveAnswer(req, &q)
 				w.WriteMsg(m)
 				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, *listenIP, m.Answer)

@@ -1,3 +1,5 @@
+github.com/bendows/gologger v0.0.0-20210329195900-da590fece16a h1:AYWNHG7BrFLXosqovLTdklN7R0ywhY8LE4B9qPyyeyA=
+github.com/bendows/gologger v0.0.0-20210329195900-da590fece16a/go.mod h1:eJE3N2CilRzfjLhR5j73E0SmhkIBiTbGqhmFr7i6WhU=
 github.com/miekg/dns v1.1.50 h1:DQUfb9uc6smULcREF09Uc+/Gd46YWqJd5DbpPE9xkcA=
 github.com/miekg/dns v1.1.50/go.mod h1:e3IlAVfNqAllflbibAZEWOXOQ+Ynzk/dDozDxY7XnME=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
