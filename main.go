@@ -12,14 +12,30 @@ import (
 	"time"
 
 	logger "github.com/bendows/gologger"
+	"github.com/bendows/goredis"
 
 	"github.com/miekg/dns"
 )
 
-var (
-	nameservers = flag.String("nameservers", "8.8.8.8,8.8.4.4", "nameservers for forwarding")
-	listenIP    = flag.String("serverip", "lookup", "IP address to listen on")
-)
+var serverconfig struct {
+	listenIP    string
+	nameservers string
+	TTL         int
+	redisHost   string
+	localDomain string
+	redisPort   string
+}
+
+func init() {
+	logger.LogOn = true
+	flag.StringVar(&serverconfig.listenIP, "dns-ip", "lookup", "The IP address to listen on.")
+	flag.StringVar(&serverconfig.nameservers, "nameservers", "8.8.4.4,8.8.8.8", "DNS servers to forward requests to.")
+	flag.IntVar(&serverconfig.TTL, "ttl", 60, "TTL in seconds for authorative records.")
+	flag.StringVar(&serverconfig.localDomain, "localDomain", "localdns.co.za", "Authoritave domain.")
+	flag.StringVar(&serverconfig.redisHost, "redis-host", "127.0.0.1", "The REDIS-HOST to connect to.")
+	flag.StringVar(&serverconfig.redisPort, "redis-port", "6379", "The REDIS-PORT to connect to.")
+	goredis.Init(serverconfig.redisHost, serverconfig.redisPort)
+}
 
 func resolveHostIp() string {
 	netInterfaceAddresses, err := net.InterfaceAddrs()
@@ -36,11 +52,11 @@ func resolveHostIp() string {
 	return ""
 }
 
-func ForwardAnswer(req *dns.Msg) (string, *dns.Msg) {
+func ForwardAnswer(req *dns.Msg) (ns string, am *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(req)
 	client := &dns.Client{Net: "udp", SingleInflight: true}
-	for _, ns := range strings.Split(*nameservers, ",") {
+	for _, ns := range strings.Split(serverconfig.nameservers, ",") {
 		if r, _, err := client.Exchange(req, ns+":53"); err == nil {
 			r.Compress = true
 			if r.Rcode == dns.RcodeSuccess {
@@ -49,7 +65,6 @@ func ForwardAnswer(req *dns.Msg) (string, *dns.Msg) {
 			r.SetRcode(req, dns.RcodeServerFailure)
 			return ns, r
 		}
-		return ns, m
 	}
 	return "", m
 }
@@ -61,19 +76,19 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 	switch q.Qtype {
 	case dns.TypeANY, dns.TypeA, dns.TypeAAAA:
 		m.Answer = append(m.Answer, &dns.A{
-			A: net.ParseIP(*listenIP),
+			A: net.ParseIP(serverconfig.listenIP),
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeA,
 				Class:  q.Qclass,
-				Ttl:    0,
+				Ttl:    uint32(serverconfig.TTL),
 			},
 		})
 		break
 	case dns.TypeMX:
 		m.Answer = append(m.Answer, &dns.MX{
 			Preference: 10,
-			Mx:         "mail1.fblks.io.",
+			Mx:         "mail1." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeMX,
@@ -82,7 +97,7 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		})
 		m.Answer = append(m.Answer, &dns.MX{
 			Preference: 15,
-			Mx:         "mail2.fblks.io.",
+			Mx:         "mail2." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeMX,
@@ -92,7 +107,7 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		break
 	case dns.TypeNS:
 		m.Answer = append(m.Answer, &dns.NS{
-			Ns: "ns1.fblks.io.",
+			Ns: "ns1." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeNS,
@@ -100,7 +115,7 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 			},
 		})
 		m.Answer = append(m.Answer, &dns.NS{
-			Ns: "ns2.fblks.io.",
+			Ns: "ns2." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeNS,
@@ -110,13 +125,13 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		break
 	case dns.TypeSOA:
 		m.Answer = append(m.Answer, &dns.SOA{
-			Ns:      "ns.fblks.io.",
-			Mbox:    "ben.fblks.io.",
+			Ns:      "ns1." + serverconfig.localDomain + ".",
+			Mbox:    "ben." + serverconfig.localDomain + ".",
 			Serial:  uint32(time.Now().Unix()),
-			Refresh: uint32(60),
-			Retry:   uint32(60),
-			Expire:  uint32(60),
-			Minttl:  uint32(60),
+			Refresh: uint32(serverconfig.TTL),
+			Retry:   uint32(serverconfig.TTL),
+			Expire:  uint32(serverconfig.TTL),
+			Minttl:  uint32(serverconfig.TTL),
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypeSOA,
@@ -126,40 +141,52 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		break
 	case dns.TypePTR:
 		m.Answer = append(m.Answer, &dns.PTR{
-			Ptr: "ns.fblks.io.",
+			Ptr: "rpi." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypePTR,
 				Class:  dns.ClassINET,
+				Ttl:    uint32(serverconfig.TTL),
 			},
 		})
 		break
 	default:
+		if q.Qtype == 65 {
+			m.Answer = append(m.Answer, &dns.A{
+				A: net.ParseIP(serverconfig.listenIP),
+				Hdr: dns.RR_Header{
+					Name:   q.Name,
+					Rrtype: dns.TypeA,
+					Class:  q.Qclass,
+					Ttl:    uint32(serverconfig.TTL),
+				},
+			})
+			break
+		}
 		m.SetRcode(req, dns.RcodeServerFailure)
-		logger.Loginfo.Println("woooops")
+		logger.Loginfo.Printf("woooops qtype [%v] qname [%v]\n", q.Qtype, q.Name)
 	}
 	return m
 }
 
 func main() {
-	logger.LogOn = true
 	flag.Parse()
-	if *listenIP == "lookup" {
-		*listenIP = resolveHostIp()
+	if serverconfig.listenIP == "lookup" {
+		serverconfig.listenIP = resolveHostIp()
 	}
-	logger.Loginfo.Printf("Serving DNS on %s forwarding some requests to %s\n", *listenIP, *nameservers)
+	logger.Loginfo.Printf("[%+v] DNS server running\n", serverconfig)
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		for _, q := range req.Question {
-			if strings.HasSuffix(q.Name, "fblks.io.") {
+			if strings.HasSuffix(q.Name, serverconfig.localDomain+".") {
 				m := AuthoritaveAnswer(req, &q)
 				w.WriteMsg(m)
-				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, *listenIP, m.Answer)
+				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, serverconfig.listenIP, m.Answer)
 				return //is this correct?
 			}
 			if q.Qtype == dns.TypePTR {
 				m := AuthoritaveAnswer(req, &q)
 				w.WriteMsg(m)
-				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, *listenIP, m.Answer)
+				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, serverconfig.listenIP, m.Answer)
 				return //is this correct?
 			}
 			ns, m := ForwardAnswer(req)
@@ -180,7 +207,7 @@ func main() {
 		}
 	}()
 
-	server := &dns.Server{Addr: *listenIP + ":53", Net: "udp", TsigSecret: nil}
+	server := &dns.Server{Addr: serverconfig.listenIP + ":53", Net: "udp", TsigSecret: nil}
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to setup server: %v\n", err)
 	}
