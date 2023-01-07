@@ -22,6 +22,7 @@ var serverconfig struct {
 	nameservers string
 	TTL         int
 	redisHost   string
+	network     string
 	localDomain string
 	redisPort   string
 }
@@ -30,6 +31,7 @@ func init() {
 	logger.LogOn = true
 	flag.StringVar(&serverconfig.listenIP, "dns-ip", "lookup", "The IP address to listen on.")
 	flag.StringVar(&serverconfig.nameservers, "nameservers", "8.8.4.4,8.8.8.8", "DNS servers to forward requests to.")
+	flag.StringVar(&serverconfig.network, "network", "192.168.0", "The network.")
 	flag.IntVar(&serverconfig.TTL, "ttl", 60, "TTL in seconds for authorative records.")
 	flag.StringVar(&serverconfig.localDomain, "localDomain", "localdns.co.za", "Authoritave domain.")
 	flag.StringVar(&serverconfig.redisHost, "redis-host", "127.0.0.1", "The REDIS-HOST to connect to.")
@@ -140,8 +142,19 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		})
 		break
 	case dns.TypePTR:
+		logger.Loginfo.Printf("PTR ben autho bingo [%s]\n", q.Name)
+
+		qip := strings.TrimSuffix(q.Name, ".in-addr.arpa.")
+		ip := reverseIP(qip)
+		ptr := ""
+		if goredis.RedisKeyExists("dhcp:ip:"+ip) == 1 {
+			ptr = goredis.GetString("dhcp:ip:" + ip)
+		} else {
+			ptr = "yellow"
+		}
+
 		m.Answer = append(m.Answer, &dns.PTR{
-			Ptr: "rpi." + serverconfig.localDomain + ".",
+			Ptr: ptr + "." + serverconfig.localDomain + ".",
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypePTR,
@@ -169,6 +182,16 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 	return m
 }
 
+func reverseIP(ip string) string {
+	octets := strings.Split(ip, ".")
+	reverseoctets := []string{}
+	for i := range octets {
+		octet := octets[len(octets)-1-i]
+		reverseoctets = append(reverseoctets, octet)
+	}
+	return strings.Join(reverseoctets, ".")
+}
+
 func main() {
 	flag.Parse()
 	if serverconfig.listenIP == "lookup" {
@@ -183,11 +206,19 @@ func main() {
 				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, serverconfig.listenIP, m.Answer)
 				return //is this correct?
 			}
-			if q.Qtype == dns.TypePTR {
-				m := AuthoritaveAnswer(req, &q)
-				w.WriteMsg(m)
-				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, serverconfig.listenIP, m.Answer)
-				return //is this correct?
+			if q.Qtype == dns.TypePTR && strings.HasSuffix(q.Name, ".in-addr.arpa.") {
+				qip := strings.TrimSuffix(q.Name, ".in-addr.arpa.")
+				ip := reverseIP(qip)
+				logger.Loginfo.Printf("PTR ben [%s] [%s] [%s]\n", w.RemoteAddr(), q.Name, ip)
+				if strings.HasPrefix(ip, serverconfig.network) {
+					m := AuthoritaveAnswer(req, &q)
+					w.WriteMsg(m)
+				} else {
+					ns, m := ForwardAnswer(req)
+					w.WriteMsg(m)
+					logger.Loginfo.Printf("F [%s] [%d] [%s] %s\n", w.RemoteAddr(), q.Qtype, ns, m.Answer)
+					return //is this correct?
+				}
 			}
 			ns, m := ForwardAnswer(req)
 			w.WriteMsg(m)
