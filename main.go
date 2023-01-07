@@ -142,19 +142,19 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 		})
 		break
 	case dns.TypePTR:
-		logger.Loginfo.Printf("PTR ben autho bingo [%s]\n", q.Name)
-
-		qip := strings.TrimSuffix(q.Name, ".in-addr.arpa.")
-		ip := reverseIP(qip)
-		ptr := ""
-		if goredis.RedisKeyExists("dhcp:ip:"+ip) == 1 {
-			ptr = goredis.GetString("dhcp:ip:" + ip)
-		} else {
-			ptr = "yellow"
-		}
+		// qip := strings.TrimSuffix(q.Name, ".in-addr.arpa.")
+		// ip := reverseIP(qip)
+		answer := "swan." + serverconfig.localDomain + "."
+		logger.Loginfo.Printf("PTR [%s] [%s]\n", q.Name, answer)
+		// ptr := ""
+		// if goredis.RedisKeyExists("dhcp:ip:"+ip) == 1 {
+		// 	ptr = goredis.GetString("dhcp:ip:" + ip)
+		// } else {
+		// ptr = "yellow"
+		// }
 
 		m.Answer = append(m.Answer, &dns.PTR{
-			Ptr: ptr + "." + serverconfig.localDomain + ".",
+			Ptr: answer,
 			Hdr: dns.RR_Header{
 				Name:   q.Name,
 				Rrtype: dns.TypePTR,
@@ -162,7 +162,6 @@ func AuthoritaveAnswer(req *dns.Msg, q *dns.Question) *dns.Msg {
 				Ttl:    uint32(serverconfig.TTL),
 			},
 		})
-		break
 	default:
 		if q.Qtype == 65 {
 			m.Answer = append(m.Answer, &dns.A{
@@ -200,30 +199,28 @@ func main() {
 	logger.Loginfo.Printf("[%+v] DNS server running\n", serverconfig)
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		for _, q := range req.Question {
-			if strings.HasSuffix(q.Name, serverconfig.localDomain+".") {
+			if q.Qtype != dns.TypePTR && strings.HasSuffix(q.Name, serverconfig.localDomain+".") {
 				m := AuthoritaveAnswer(req, &q)
 				w.WriteMsg(m)
 				logger.Loginfo.Printf("A [%s] [%d] %s %s\n", w.RemoteAddr(), q.Qtype, serverconfig.listenIP, m.Answer)
-				return //is this correct?
+				continue
 			}
 			if q.Qtype == dns.TypePTR && strings.HasSuffix(q.Name, ".in-addr.arpa.") {
 				qip := strings.TrimSuffix(q.Name, ".in-addr.arpa.")
 				ip := reverseIP(qip)
-				logger.Loginfo.Printf("PTR ben [%s] [%s] [%s]\n", w.RemoteAddr(), q.Name, ip)
 				if strings.HasPrefix(ip, serverconfig.network) {
 					m := AuthoritaveAnswer(req, &q)
 					w.WriteMsg(m)
-				} else {
-					ns, m := ForwardAnswer(req)
-					w.WriteMsg(m)
-					logger.Loginfo.Printf("F [%s] [%d] [%s] %s\n", w.RemoteAddr(), q.Qtype, ns, m.Answer)
-					return //is this correct?
+					continue
 				}
+				ns, m := ForwardAnswer(req)
+				w.WriteMsg(m)
+				logger.Loginfo.Printf("F [%s] [%d] [%s] %s\n", w.RemoteAddr(), q.Qtype, ns, m.Answer)
+				continue
 			}
 			ns, m := ForwardAnswer(req)
 			w.WriteMsg(m)
 			logger.Loginfo.Printf("F [%s] [%d] [%s] %s\n", w.RemoteAddr(), q.Qtype, ns, m.Answer)
-			return //is this correct?
 		}
 	})
 
